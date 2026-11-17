@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,10 +10,13 @@ from .config import CORS_ORIGINS
 from .database import Base, engine, get_db
 from .deps import CurrentUser, get_current_user, require_admin
 from .models import Issue
+from .notify import send_notification
 from .schemas import IssueCreate, IssueOut, IssueStatus, IssueStatusUpdate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 log = logging.getLogger("utility")
+
+STATUS_LABELS = {"new": "Новая", "in_progress": "В работе", "resolved": "Решена", "rejected": "Отклонена"}
 
 
 @asynccontextmanager
@@ -42,6 +45,7 @@ def health():
 @app.post("/issues", response_model=IssueOut, status_code=status.HTTP_201_CREATED, tags=["issues"])
 def create_issue(
     data: IssueCreate,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -55,6 +59,9 @@ def create_issue(
     db.commit()
     db.refresh(issue)
     log.info("Issue created id=%s author=%s category=%s", issue.id, user.id, issue.category)
+    background.add_task(
+        send_notification, issue.author_id, "ISSUE_CREATED", {"issue_id": issue.id, "address": issue.address}
+    )
     return issue
 
 
@@ -77,6 +84,7 @@ def list_issues(
 def update_issue_status(
     issue_id: int,
     data: IssueStatusUpdate,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: CurrentUser = Depends(require_admin),
 ):
@@ -88,4 +96,11 @@ def update_issue_status(
     db.commit()
     db.refresh(issue)
     log.info("Issue id=%s status %s -> %s by admin=%s", issue.id, old, issue.status, admin.id)
+    if old != issue.status:
+        background.add_task(
+            send_notification,
+            issue.author_id,
+            "ISSUE_STATUS_CHANGED",
+            {"issue_id": issue.id, "status": STATUS_LABELS.get(issue.status, issue.status)},
+        )
     return issue

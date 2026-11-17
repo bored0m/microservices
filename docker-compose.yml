@@ -1,0 +1,176 @@
+services:
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth_pass
+      POSTGRES_DB: auth_db
+    volumes: [auth_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth -d auth_db"]
+      interval: 3s
+      retries: 20
+
+  utility-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: utility
+      POSTGRES_PASSWORD: utility_pass
+      POSTGRES_DB: utility_db
+    volumes: [utility_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U utility -d utility_db"]
+      interval: 3s
+      retries: 20
+
+  billing-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: billing_pass
+      POSTGRES_DB: billing_db
+    volumes: [billing_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U billing -d billing_db"]
+      interval: 3s
+      retries: 20
+
+  notification-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notification
+      POSTGRES_PASSWORD: notification_pass
+      POSTGRES_DB: notification_db
+    volumes: [notification_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification -d notification_db"]
+      interval: 3s
+      retries: 20
+
+  transport-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: transport
+      POSTGRES_PASSWORD: transport_pass
+      POSTGRES_DB: transport_db
+    volumes: [transport_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transport -d transport_db"]
+      interval: 3s
+      retries: 20
+
+  environment-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: environment
+      POSTGRES_PASSWORD: environment_pass
+      POSTGRES_DB: environment_db
+    volumes: [environment_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U environment -d environment_db"]
+      interval: 3s
+      retries: 20
+
+  auth-service:
+    build: ./auth-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://auth:auth_pass@auth-db:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please}
+      JWT_EXPIRE_MINUTES: "60"
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      auth-db: {condition: service_healthy}
+    ports: ["8001:8000"]
+
+  utility-service:
+    build: ./utility-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://utility:utility_pass@utility-db:5432/utility_db
+      AUTH_SERVICE_URL: http://auth-service:8000
+      NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      utility-db: {condition: service_healthy}
+      auth-service: {condition: service_started}
+      notification-service: {condition: service_started}
+    ports: ["8002:8000"]
+
+  billing-service:
+    build: ./billing-payment-service
+    environment:
+      BILLING_DATABASE_URL: postgresql+psycopg2://billing:billing_pass@billing-db:5432/billing_db
+      BILLING_AUTH_SERVICE_URL: http://auth-service:8000
+      BILLING_NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      BILLING_PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-webhook-secret-change-me}
+      BILLING_SIMULATE_PAYMENT_SUCCESS: "true"
+      BILLING_CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      billing-db: {condition: service_healthy}
+      auth-service: {condition: service_started}
+      notification-service: {condition: service_started}
+    ports: ["8003:8000"]
+
+  notification-service:
+    build: ./notification-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://notification:notification_pass@notification-db:5432/notification_db
+      AUTH_SERVICE_URL: http://auth-service:8000
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      notification-db: {condition: service_healthy}
+      auth-service: {condition: service_started}
+    ports: ["8004:8000"]
+
+  transport-service:
+    build: ./transport-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://transport:transport_pass@transport-db:5432/transport_db
+      AUTH_SERVICE_URL: http://auth-service:8000
+      NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      transport-db: {condition: service_healthy}
+      auth-service: {condition: service_started}
+      notification-service: {condition: service_started}
+    ports: ["8005:8000"]
+
+  environment-service:
+    build: ./environment-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://environment:environment_pass@environment-db:5432/environment_db
+      AUTH_SERVICE_URL: http://auth-service:8000
+      NOTIFICATION_SERVICE_URL: http://notification-service:8000
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      environment-db: {condition: service_healthy}
+      auth-service: {condition: service_started}
+      notification-service: {condition: service_started}
+    ports: ["8006:8000"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_AUTH_URL: http://localhost:8001
+        VITE_UTILITY_URL: http://localhost:8002
+        VITE_BILLING_URL: http://localhost:8003
+        VITE_NOTIFICATION_URL: http://localhost:8004
+        VITE_TRANSPORT_URL: http://localhost:8005
+        VITE_ENVIRONMENT_URL: http://localhost:8006
+    depends_on:
+      - auth-service
+      - utility-service
+      - billing-service
+      - notification-service
+      - transport-service
+      - environment-service
+    ports: ["3000:80"]
+
+volumes:
+  auth_data:
+  utility_data:
+  billing_data:
+  notification_data:
+  transport_data:
+  environment_data:
